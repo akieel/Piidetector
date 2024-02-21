@@ -146,3 +146,44 @@
 2024-02-09 10:57:50,671 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:5000
 2024-02-09 10:57:50,671 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 21:25:49,670 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 21:25:49,670 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 21:27:00,038 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 21:27:00,038 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 21:28:57,642 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 21:28:57,643 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 21:33:10,458 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 21:33:10,458 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 21:44:59,130 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 21:44:59,130 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 21:45:17,127 - INFO - Scan started.
+2024-02-20 21:45:17,129 - INFO - Detected Email Address in C:/Users/byavu/Desktop/data/change.txt
+2024-02-20 21:45:17,129 - INFO - Detected Phone Number in C:/Users/byavu/Desktop/data/change.txt
+2024-02-20 21:45:17,129 - INFO - Detected Address in C:/Users/byavu/Desktop/data/change.txt
+2024-02-20 21:45:17,130 - INFO - Scan completed.
+2024-02-20 21:53:27,952 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 21:53:27,953 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 23:49:32,593 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 23:49:32,593 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 23:49:52,948 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 23:49:52,948 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 23:53:48,544 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 23:53:48,544 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 23:54:57,563 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 23:54:57,564 - INFO - [33mPress CTRL+C to quit[0m
+2024-02-20 23:55:02,607 - INFO - Scan started.
+2024-02-20 23:55:02,609 - INFO - Detected Email Address in C:/Users/byavu/Desktop/data/change.txt
+2024-02-20 23:55:02,609 - INFO - Scan completed.
+2024-02-20 23:58:26,739 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2024-02-20 23:58:26,739 - INFO - [33mPress CTRL+C to quit[0m

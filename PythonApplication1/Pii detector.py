@@ -1,74 +1,113 @@
-import re
 import tkinter as tk
-from tkinter import filedialog, messagebox, Checkbutton, IntVar, simpledialog, scrolledtext, Toplevel, Entry, Label, Button
-from tkinter.ttk import Separator, Style
-import csv
-from fpdf import FPDF
+from tkinter import ttk
+from tkinter import (
+    filedialog, messagebox, Toplevel, Entry, Label, Button, Checkbutton, IntVar, simpledialog, Listbox
+)
+from tkinter.ttk import Separator, Style, Progressbar
+import threading
 import os
-from PyPDF2 import PdfReader
-import docx
-import openpyxl
-import pythoncom
-from pptx import Presentation
+import json
+import re
+import flask
+from flask_httpauth import HTTPBasicAuth
+from threading import Thread
+import concurrent.futures
+from cryptography.fernet import Fernet
+import pdfplumber
+from pdf2image import convert_from_path
 import pytesseract
 from PIL import Image
+import docx
+import openpyxl
+from pptx import Presentation
+import markdown2
+from bs4 import BeautifulSoup
+import pythoncom
+from loguru import logger
 import logging
-import datetime
-from cryptography.fernet import Fernet
-import json
-from json.decoder import JSONDecodeError
-import flask
-from threading import Thread
-from tkinter import ttk
-from tkinter.messagebox import showinfo
-from pdf2image import convert_from_path
 
-# Initialize logging
-logging.basicConfig(filename='pii_scan_log.txt', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logger configuration
+logger.add("pii_scan_log_{time}.txt", rotation="1 week", compression="zip")
 
+# Flask app and basic auth setup
 app = flask.Flask(__name__)
+auth = HTTPBasicAuth()
 
-# Generate or load a previously stored encryption key
-def load_or_generate_key():
-    key_path = 'encryption.key'
-    if os.path.exists(key_path):
-        with open(key_path, 'rb') as key_file:
-            key = key_file.read()
-    else:
+# Environment variables for admin credentials
+admin_username = os.environ.get('ADMIN_USERNAME', 'default_admin')
+admin_password = os.environ.get('ADMIN_PASSWORD', 'default_secret')
+users = {admin_username: admin_password}
+
+# Flask app configuration
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'default_secret_key')
+
+# Basic authentication verification
+@auth.verify_password
+def verify_password(username, password):
+    return username in users and users[username] == password
+
+# Encryption module class definition
+class EncryptionModule:
+    def __init__(self, key_path='encryption.key'):
+        self.key_path = key_path
+        self.cipher_suite = self.init_cipher_suite()
+
+    def init_cipher_suite(self):
+        key = self.load_or_generate_key()
+        return Fernet(key)
+
+    def load_or_generate_key(self):
+        if os.path.exists(self.key_path):
+            with open(self.key_path, 'rb') as key_file:
+                return key_file.read()
         key = Fernet.generate_key()
-        with open(key_path, 'wb') as key_file:
+        with open(self.key_path, 'wb') as key_file:
             key_file.write(key)
-    return key
+        return key
 
-encryption_key = load_or_generate_key()
-cipher_suite = Fernet(encryption_key)
+    def encrypt_text(self, text):
+        if isinstance(text, str):
+            text = text.encode()
+        return self.cipher_suite.encrypt(text)
 
-def encrypt_text(text):
-    if isinstance(text, str):
-        text = text.encode()
-    encrypted_text = cipher_suite.encrypt(text)
-    return encrypted_text
+    def decrypt_text(self, encrypted_text):
+        return self.cipher_suite.decrypt(encrypted_text).decode()
 
-def decrypt_text(encrypted_text):
-    decrypted_text = cipher_suite.decrypt(encrypted_text).decode()
-    return decrypted_text
-
+# PDF to images conversion function
 def convert_pdf_to_images(pdf_path):
-    return convert_from_path(pdf_path)
+    with pdfplumber.open(pdf_path) as pdf:
+        images = [convert_from_path(page.path, 200) for page in pdf.pages]
+    return images
+
+class SettingsManager:
+    def __init__(self, settings_path='settings.json'):
+        self.settings_path = settings_path
+        self.settings = self.load_settings()
+
+    def load_settings(self):
+        if os.path.exists(self.settings_path):
+            with open(self.settings_path, 'r') as file:
+                return json.load(file)
+        return {"custom_patterns": {}}
+
+    def save_settings(self):
+        with open(self.settings_path, 'w') as file:
+            json.dump(self.settings, file, indent=4)
+
 
 
 def read_file_content(file_path):
     try:
         if file_path.endswith('.txt'):
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return file.read()
+            return read_text_file(file_path)
         elif file_path.endswith('.pdf'):
+            return read_pdf_file(file_path)
             try:
-                reader = PdfReader(file_path)
                 text = ''
-                for page in reader.pages:
-                    text += page.extractText() + ' '
-                if not text.strip():  # If text extraction returned empty, attempt OCR
+                with pdfplumber.open(file_path) as pdf:
+                    for page in pdf.pages:
+                        text += page.extract_text() + ' '
+                if not text.strip():
                     images = convert_pdf_to_images(file_path)
                     text = ' '.join([pytesseract.image_to_string(image) for image in images])
                 return text
@@ -90,7 +129,7 @@ def read_file_content(file_path):
                         text += ' '.join([str(cell) for cell in row if cell is not None]) + '\n'
             return text
         elif file_path.endswith('.pptx'):
-            pythoncom.CoInitialize()  # Needed when running in thread
+            pythoncom.CoInitialize()
             pres = Presentation(file_path)
             text = ''
             for slide in pres.slides:
@@ -98,43 +137,63 @@ def read_file_content(file_path):
                     if hasattr(shape, 'text'):
                         text += shape.text + '\n'
             return text
-        elif file_path.endswith('.pdf'):
-            # Attempt OCR for image-based PDFs
-            images = convert_pdf_to_images(file_path)
-            text = ''
-            for image in images:
-                text += pytesseract.image_to_string(image) + '\n'
-            return text
+        elif file_path.endswith('.html'):
+            with open(file_path, 'r', encoding='utf-8') as file:
+                soup = BeautifulSoup(file, 'html.parser')
+                return soup.get_text()
+        elif file_path.endswith('.md'):
+            with open(file_path, 'r', encoding='utf-8') as file:
+                text = file.read()
+                html = markdown2.markdown(text)
+                soup = BeautifulSoup(html, 'html.parser')
+                return soup.get_text()
         else:
             logging.warning(f"Unsupported file format for {file_path}")
             messagebox.showerror("Unsupported File", "The selected file format is not supported.")
             return None
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_path}")
+        messagebox.showerror("Error", f"File not found: {file_path}")
+        return None
+    except PermissionError:
+        logger.error(f"Permission denied for file: {file_path}")
+        messagebox.showerror("Error", f"Permission denied for file: {file_path}")
+        return None
     except Exception as e:
-        logging.error(f"Error reading file {file_path}: {e}")
+        logger.error(f"Error reading file {file_path}: {e}")
         messagebox.showerror("Error", f"Could not read file: {file_path}")
         return None
+    
+def read_text_file(file_path):
+    with open(file_path, 'r', encoding='utf-8') as file:
+        return file.read()
 
-def load_settings():
-    settings_path = 'settings.json'
-    if os.path.exists(settings_path):
-        try:
-            with open(settings_path, 'r') as settings_file:
-                settings = json.load(settings_file)
-            # Compile the regex patterns if they exist in settings
-            if "custom_patterns" in settings:
-                settings["custom_patterns"] = {k: re.compile(v) for k, v in settings["custom_patterns"].items()}
-            return settings
-        except JSONDecodeError:
-            # Return empty settings or default settings if JSON is malformed or empty
-            return {}
-    else:
-        # Return empty settings or default settings if file doesn't exist
-        return {}
+def read_pdf_file(file_path):
+    text = ''
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + ' '
+    if not text.strip():
+        images = convert_pdf_to_images(file_path)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_image = {executor.submit(pytesseract.image_to_string, image): image for image in images}
+            for future in concurrent.futures.as_completed(future_to_image):
+                text += future.result() + ' '
+    return text
 
-def save_settings(settings):
-    settings_path = 'settings.json'
-    with open(settings_path, 'w') as settings_file:
-        json.dump(settings, settings_file)
+class SettingsManager:
+    def __init__(self, settings_path='settings.json'):
+        self.settings_path = settings_path
+
+    def load_settings(self):
+        if os.path.exists(self.settings_path):
+            with open(self.settings_path, 'r') as file:
+                return json.load(file)
+        return self.settings_manager.load_settings()
+
+    def save_settings(self, settings):
+        with open(self.settings_path, 'w') as file:
+            json.dump(settings, file, indent=4)
 
 def compile_regex_patterns(custom_patterns=None):
     default_patterns = {
@@ -169,69 +228,82 @@ def detect_pii(file_path, selected_pii, custom_patterns=None):
         logging.info(f"No PII detected in {file_path}")
     return detected_pii
 
-@app.route('/api/scan', methods=['POST'])
-def api_scan():
-    data = flask.request.json
-    file_path = data['file_path']
-    selected_pii = data['selected_pii']
-    custom_patterns = data.get('custom_patterns', {})
-    result = detect_pii(file_path, selected_pii, custom_patterns)
-    return flask.jsonify(result)
-
+# PII Scanner App class definition with progress_var encapsulation
 class PiiScannerApp:
-    def __init__(self, root):
-        self.root = root
-        self.settings = load_settings()
-        self.custom_patterns = self.settings.get("custom_patterns", {})
-        self.pii_selections = []  # Ensure this is initialized here
+    def __init__(self, master):
+        self.master = master
+        master.title("PII Detector")
+
+        self.settings_manager = SettingsManager()  # Initialize SettingsManager
+        self.settings = self.settings_manager.load_settings()  # Use SettingsManager to load settings
+        self.custom_patterns = self.settings.get('custom_patterns', {})  # Initialize custom_patterns from settings
+
+        self.encryption_module = EncryptionModule()
+
+        self.pii_selections = []
+
+        self.progress_var = tk.DoubleVar()  # Progress variable for progress bar
+
         self.setup_ui()
+
+        global progress_var
+        progress_var = tk.DoubleVar()
+        self.progress_bar = Progressbar(master, orient="horizontal", length=200, mode="determinate", variable=progress_var)
+        self.progress_bar.pack()
     
     def setup_ui(self):
-        self.root.title("PII Scanner")
-        self.root.geometry("800x600")
-        
-        self.style = Style(self.root)
+        self.master.title("PII Scanner")
+        self.master.geometry("800x600")
+
+        self.style = Style(self.master)
         self.style.configure('TCheckbutton', font=('Arial', 10))
-        
-        self.main_frame = tk.Frame(self.root)
+
+        self.main_frame = tk.Frame(self.master)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         self.top_frame = tk.Frame(self.main_frame)
         self.top_frame.pack(fill=tk.X)
-        
+
         self.bottom_frame = tk.Frame(self.main_frame)
         self.bottom_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         self.file_button = tk.Button(self.top_frame, text="Select Files", command=self.browse_files)
         self.file_button.pack(side=tk.LEFT, padx=10, pady=10)
-        
+
         self.scan_button = tk.Button(self.top_frame, text="Scan", command=self.scan_files)
         self.scan_button.pack(side=tk.LEFT, padx=10)
-        
+
         self.save_button = tk.Button(self.top_frame, text="Save Report", command=self.save_report_dialog)
         self.save_button.pack(side=tk.LEFT, padx=10)
-        
-        self.settings_button = tk.Button(self.top_frame, text="Settings", command=self.open_settings)
-        self.settings_button.pack(side=tk.LEFT, padx=10)
-        
+
+        self.settings_button = Button(self.master, text="Settings", command=self.open_settings)
+        self.settings_button.pack()
+
         self.separator = Separator(self.main_frame, orient='horizontal')
         self.separator.pack(fill=tk.X, padx=5, pady=5)
-        
+
         self.check_frame = tk.Frame(self.bottom_frame)
         self.check_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        
+
         self.scrollbar = tk.Scrollbar(self.check_frame)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
+        self.progress_bar = Progressbar(self.master, orient="horizontal", length=200, mode="determinate", variable=self.progress_var)
+        self.progress_bar.pack()
+
         self.pii_listbox = tk.Listbox(self.check_frame, yscrollcommand=self.scrollbar.set, selectmode=tk.MULTIPLE)
         self.pii_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.scrollbar.config(command=self.pii_listbox.yview)
-        
-        self.results_text = scrolledtext.ScrolledText(self.bottom_frame)
-        self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.results_tree = ttk.Treeview(self.bottom_frame, columns=("Type", "Value"), show="headings")
+        self.results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.results_tree.heading("Type", text="PII Type")
+        self.results_tree.heading("Value", text="PII Value")
+
+    # Initialize the frame for Checkbuttons here
         self.checkbuttons_frame = tk.Frame(self.check_frame)
-        self.checkbuttons_frame.pack(fill=tk.BOTH, expand=True)
-        
+        self.checkbuttons_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
         self.pii_types = [
             'Email Address', 'Phone Number', 'Address',
             'Social Security Number', 'Credit Card Number', 'Passport Number', 'Driver\'s License Number'
@@ -241,8 +313,15 @@ class PiiScannerApp:
             chk = Checkbutton(self.checkbuttons_frame, text=pii_type, variable=var, font=('Arial', 10))
             chk.pack(anchor=tk.W, side=tk.TOP, expand=True)
             self.pii_selections.append((pii_type, var))
-        
+
         self.pii_listbox.bind('<<ListboxSelect>>', self.on_select)
+
+    # Added Text widget for displaying results
+        self.results_text = tk.Text(self.bottom_frame)
+        self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        pass
+       
     
     def on_select(self, event):
         selections = event.widget.curselection()
@@ -251,33 +330,50 @@ class PiiScannerApp:
         
 
     def open_settings(self):
-        self.settings_window = Toplevel(self.root)
-        self.settings_window.title("Settings")
-        self.settings_window.geometry("400x300")
-        
-        Label(self.settings_window, text="Add Custom PII Pattern Name:").pack()
-        self.custom_pii_name_entry = Entry(self.settings_window)
+        settings_window = Toplevel(self.master)
+        settings_window.title("Settings")
+        settings_window.geometry("400x300")
+
+        self.custom_patterns_listbox = Listbox(settings_window)
+        self.custom_patterns_listbox.pack(pady=5)
+
+        self.custom_pii_name_entry = Entry(settings_window)
         self.custom_pii_name_entry.pack(pady=5)
-        
-        Label(self.settings_window, text="Add Custom PII Regex Pattern:").pack()
-        self.custom_pii_pattern_entry = Entry(self.settings_window)
+
+        self.custom_pii_pattern_entry = Entry(settings_window)
         self.custom_pii_pattern_entry.pack(pady=5)
+
+        Button(settings_window, text="Add Pattern", command=self.add_custom_pattern).pack(pady=2)
+        Button(settings_window, text="Remove Selected Pattern", command=self.remove_custom_pattern).pack(pady=2)
+
+        # Update the listbox with current custom patterns
+        self.update_custom_patterns_listbox()
         
-        tk.Button(self.settings_window, text="Test Pattern", command=self.test_pattern).pack(pady=10)
-        tk.Button(self.settings_window, text="Save Custom PII Pattern", command=self.save_custom_pattern).pack(pady=10)
+    def remove_custom_pattern(self):
+            selected_indices = self.custom_patterns_listbox.curselection()
+            if not selected_indices:
+                messagebox.showerror("Error", "No pattern selected.")
+                return
+            selected_index = selected_indices[0]
+            pattern_name = self.custom_patterns_listbox.get(selected_index)
+            del self.custom_patterns[pattern_name]  # Remove the pattern from the dictionary
+            self.settings['custom_patterns'] = self.custom_patterns  # Update the settings dictionary
+            self.settings_manager.save_settings(self.settings)  # Save the updated settings to the JSON file
+            self.update_custom_patterns_listbox()  # Refresh the listbox to show current custom patterns
+            messagebox.showinfo("Success", f"Removed pattern '{pattern_name}' successfully.")
     
     def save_custom_pattern(self):
         pattern_name = self.custom_pii_name_entry.get()
         pattern_regex = self.custom_pii_pattern_entry.get()
         if pattern_name and pattern_regex:
-        # Directly save the string regex, not the compiled object
+        # Assuming you have a way to update self.settings with the new pattern
             self.custom_patterns[pattern_name] = pattern_regex
             self.settings['custom_patterns'] = self.custom_patterns
-            save_settings(self.settings)
+            self.settings_manager.save_settings(self.settings)
             messagebox.showinfo("Success", "Custom PII pattern saved.")
             self.settings_window.destroy()
-            self.setup_ui()  # Refresh UI to include new custom pattern
-
+            self.setup_ui() 
+            
     def browse_files(self):
         self.file_paths = filedialog.askopenfilenames()
         if not self.file_paths:
@@ -287,29 +383,32 @@ class PiiScannerApp:
         selected_pii = [pii_type for pii_type, var in self.pii_selections if var.get()]
         if self.file_paths and selected_pii:
             logging.info("Scan started.")
-            for file_path in self.file_paths:
-                try:
-                    result = detect_pii(file_path, selected_pii, self.custom_patterns)
-                    self.display_results(result, file_path)
-                except Exception as e:
-                    logging.error(f"Error scanning {file_path}: {e}")
-                    messagebox.showerror("Scan Error", f"An error occurred while scanning {file_path}.")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_file = {executor.submit(detect_pii, file_path, selected_pii, self.custom_patterns): file_path for file_path in self.file_paths}
+                for future in concurrent.futures.as_completed(future_to_file):
+                    file_path = future_to_file[future]
+                    try:
+                        result = future.result()
+                        self.display_results(result, file_path)
+                    except Exception as e:
+                        logging.error(f"Error scanning {file_path}: {e}")
+                        messagebox.showerror("Scan Error", f"An error occurred while scanning {file_path}.")
             logging.info("Scan completed.")
         else:
             messagebox.showwarning("Warning", "Please select one or more files and at least one PII type.")
-
+            threading.Thread(target=self._scan_files_thread, daemon=True).start()
     
+            
+       
     def display_results(self, results, file_path):
         self.results_text.insert(tk.END, f"Results for {os.path.basename(file_path)}:\n")
         if not results:
             self.results_text.insert(tk.END, "No PII found.\n\n")
         else:
             for pii_type, piis in results.items():
-                self.results_text.insert(tk.END, f"{pii_type}:\n")
-                for pii in piis:
-                    self.results_text.insert(tk.END, f"   {pii}\n")
-                self.results_text.insert(tk.END, "-----------------------\n")
-            self.results_text.insert(tk.END, "\n")
+                parent = self.results_tree.insert("", tk.END, text=pii_type, values=(f"{os.path.basename(file_path)} - {pii_type}",))
+            for pii in piis:
+                self.results_tree.insert(parent, tk.END, values=(" ", pii))
     
     def save_report_dialog(self):
         format_choice = simpledialog.askstring("Save Report", "Enter format (TXT, PDF, CSV):")
@@ -318,7 +417,8 @@ class PiiScannerApp:
     
     def save_report(self, format_choice):
         content = self.results_text.get(1.0, tk.END)
-        encrypted_content = encrypt_text(content)
+        # Use the encrypt_text method from the EncryptionModule instance
+        encrypted_content = self.encryption_module.encrypt_text(content)
         
         save_path = filedialog.asksaveasfilename(defaultextension=f".{format_choice.lower()}")
         if save_path:
@@ -341,9 +441,41 @@ class PiiScannerApp:
                     messagebox.showinfo("Pattern Test Result", "No matches found.")
             except re.error as e:
                 messagebox.showerror("Pattern Test Error", f"Invalid regex pattern: {e}")
+                
+    def add_custom_pattern(self):
+        pattern_name = self.custom_pii_name_entry.get()
+        pattern_regex = self.custom_pii_pattern_entry.get()
+        if pattern_name and pattern_regex:
+            try:
+                re.compile(pattern_regex)  # Validate regex
+                self.custom_patterns[pattern_name] = pattern_regex
+                self.settings['custom_patterns'] = self.custom_patterns
+                self.settings_manager.save_settings()  # Corrected usage
+                messagebox.showinfo("Success", "Pattern added successfully.")
+            except re.error as e:
+                messagebox.showerror("Error", f"Invalid regex pattern: {e}")
+                
+    def update_custom_patterns_listbox(self):
+        # Assuming self.custom_patterns_listbox is correctly initialized
+        self.custom_patterns_listbox.delete(0, tk.END)
+        for pattern_name in self.custom_patterns.keys():
+            self.custom_patterns_listbox.insert(tk.END, pattern_name)
+                
 
+@app.route('/api/scan', methods=['POST'])
+@auth.login_required
+def api_scan():
+    data = flask.request.json
+    file_path = data['file_path']
+    selected_pii = data['selected_pii']
+    # Assuming detect_pii function exists and is properly defined
+    result = detect_pii(file_path, selected_pii)
+    return flask.jsonify(result)
 
 if __name__ == "__main__":
+    # Setup logging configuration (optional but recommended for better logging behavior)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
     api_thread = Thread(target=lambda: app.run(port=5000, debug=True, use_reloader=False))
     api_thread.start()
     root = tk.Tk()
